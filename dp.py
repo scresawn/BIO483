@@ -8,8 +8,10 @@ import requests
 load_dotenv()
 
 # load the API key from the .env file, or use a placeholder value if the .env file is not found or the API_KEY variable is not set
-apiKey = getenv("API_KEY") or "your phamerator API key here" # replace this with your actual phamerator API key
+apiKey = getenv("API_KEY") or "your phamerator API key here"
 if apiKey == "your phamerator API key here":
+    print("Error: API key not found. Create an account on https://phamerator.org and generate an API key in the account settings, then add it to a .env file in the same directory as this script with the following line:\n" \
+    "API_KEY=your phamerator API key here")
     print("Please replace the apiKey variable with your actual phamerator API key,\n" \
     "which can be obtained by creating an account on https://phamerator.org and generating\n" \
     "a key in the account settings.")
@@ -17,7 +19,7 @@ if apiKey == "your phamerator API key here":
 
 dataset = "Actino_Draft"
 
-subcluster = "C2" # use the subcluster that you want to analyze, for example "G2" for the G2 subcluster of actinobacteriophages
+subcluster = "P5" # use the subcluster that you want to analyze, for example "G2" for the G2 subcluster of actinobacteriophages
 
 headers = {
     "Authorization": f"Bearer {apiKey}",
@@ -31,6 +33,11 @@ def getPhameratorData(endpoint, args=""):
 
 # for a pair of phages, create a gene matrix that contains the phamily names of the genes for each phage, and then create a score matrix and an arrow matrix to store the scores and directions for the dynamic programming algorithm
 def createDPMatrix(phage1, phage2):
+
+    match = 1
+    mismatch = -1
+    gap = -3
+
     geneMatrix = []
     scoreMatrix = []
     arrowMatrix = []
@@ -46,9 +53,9 @@ def createDPMatrix(phage1, phage2):
 
     # Initialize the first row and first column with 0 values
     for i in range(len(scoreMatrix)):
-        scoreMatrix[i][0] = 0
+        scoreMatrix[i][0] = i * gap
     for j in range(len(scoreMatrix[0])):
-        scoreMatrix[0][j] = 0
+        scoreMatrix[0][j] = j * gap
 
     # for each cell in the score matrix, calculate the score based on the following rules:
     # if the gene in the first phage is the same as the gene in the second phage, the score is 1 plus the score of the cell diagonally above and to the left
@@ -58,17 +65,20 @@ def createDPMatrix(phage1, phage2):
     for i in range(1, len(scoreMatrix)):
         for j in range(1, len(scoreMatrix[0])):
             if geneMatrix[0][i-1] == geneMatrix[1][j-1]:
-                scoreMatrix[i][j] = scoreMatrix[i-1][j-1] + 1
+                scoreMatrix[i][j] = scoreMatrix[i-1][j-1] + match # match 
                 arrowMatrix[i][j] = "D"
             else:
                 scores = [
-                    scoreMatrix[i-1][j-1],  # diagonal
-                    scoreMatrix[i-1][j] - 1,     # up
-                    scoreMatrix[i][j-1] - 1      # left
+                    scoreMatrix[i-1][j-1] + mismatch,  # diagonal: mismatch
+                    scoreMatrix[i-1][j] + gap,     # up: gap in sequence 2
+                    scoreMatrix[i][j-1] + gap      # left: gap in sequence 1
                 ]
                 max_score = max(scores)
                 scoreMatrix[i][j] = max_score
                 arrowMatrix[i][j] = ["D", "U", "L"][scores.index(max_score)]
+    
+    for row in scoreMatrix:
+        print("\t".join(f"{score:>5}" for score in row))
 
     # backtrack through the score matrix and arrow matrix to align the two lists of phamilies, starting from the bottom right cell and moving to the top left cell
     alignedPhams1 = []
@@ -99,11 +109,52 @@ def createDPMatrix(phage1, phage2):
     print("\t".join(f"{pham:<{max_width}}" for pham in alignedPhams1))
     print("\t".join(f"{pham:<{max_width}}" for pham in alignedPhams2))
 
+    return (alignedPhams1, alignedPhams2)
+
 # for each possible pair of phages in the specified subcluster, get the list of genes for each phage and use a dynamic programming algorithm to align the two lists of genes based on their phamily names, with a score of 1 for a match and a gap penalty of -1 for a mismatch or gap. The output should be two aligned lists of phamilies, with gaps represented by "---", and the columns should be aligned using tabs to separate the phamily names and gap characters and setting the width of each column to be the same for both lines.
 phages = [phage for phage in getPhameratorData("phagesbysubcluster/", subcluster)]
 
+alignments=[]
 # put all the phages in the specified subcluster into a list and then iterate through all possible pairs of phages in the list to compare them using the dynamic programming algorithm
 for i in range(len(phages)):
     for j in range(i + 1, len(phages)):
-        print(f"Comparing {phages[i]['phagename']} and {phages[j]['phagename']}...")
-        createDPMatrix(phages[i], phages[j])
+        # print(f"Comparing {phages[i]['phagename']} and {phages[j]['phagename']}...")
+        alignments.append(createDPMatrix(phages[i], phages[j]))
+
+ungappedAlignments = []
+
+for alignment in alignments:
+    phams1, phams2 = alignment
+    for index in range(len(phams1)):
+        if phams1[index] != "---" and phams2[index] != "---":
+            ungappedAlignments.append((phams1[index], phams2[index]))
+
+
+totalCounts = {}
+for q, s in ungappedAlignments:
+    # count the number of times q or s appears in the ungapped alignments
+    if q not in totalCounts:
+        totalCounts[q] = 0
+    if s not in totalCounts:
+        totalCounts[s] = 0
+    totalCounts[q] += 1
+    totalCounts[s] += 1
+
+print (totalCounts)
+
+# for each phamily, count the number of times it is aligned with each of the phamilies in the ungapped alignments and store the counts in a dictionary of dictionaries, where the keys of the outer dictionary are the phamily names and the values are dictionaries with the keys being the phamily names that they are aligned with and the values being the counts of how many times they are aligned together
+alignmentCounts = {}
+for q, s in ungappedAlignments:
+    if q not in alignmentCounts:
+        alignmentCounts[q] = {}
+    if s not in alignmentCounts[q]:
+        alignmentCounts[q][s] = 0
+    alignmentCounts[q][s] += 1
+
+    if s not in alignmentCounts:
+        alignmentCounts[s] = {}
+    if q not in alignmentCounts[s]:
+        alignmentCounts[s][q] = 0
+    alignmentCounts[s][q] += 1
+
+print (alignmentCounts)
