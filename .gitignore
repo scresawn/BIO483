@@ -4,3 +4,4 @@
 /dp.tsv
 /venv
 .env
+*.tsv
